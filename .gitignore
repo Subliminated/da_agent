@@ -1,0 +1,63 @@
+# macOS system files
+.DS_Store
+
+# Node.js dependencies
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+ENV/
+.venv/
+
+# VSCode settings
+.vscode/
+
+# Logs
+*.log
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# IDE files
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Build output
+dist/
+build/
+out/
+
+# Environment files
+.env
+.env.*
+
+# Coverage reports
+coverage/
+*.cover
+*.coverage
+*.lcov
+
+# Git
+.git/
+
+# Backup files
+*~
+*.swp
+*.bak
+*.tmp
+
+# Exclude folders
+__pycache__/*
+chroma_db/*
+chroma_db_old/*
+data/*
+swe_vector_db/*

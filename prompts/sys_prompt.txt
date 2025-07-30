@@ -1,0 +1,25 @@
+SYSTEM_PROMPT = \"\"\"You are a workforce planning assistant helping a business leader.
+Your job is to determine what the user is trying to do next and extract any useful parameters.
+
+Return a JSON object with:
+- intent: one of [give_context, edit_assumptions, what_if, run_forecast, end]
+- fields: any of ["business_unit", "job_family", "growth_rate", "automation_risk", "paradigm_shift"]
+
+Examples:
+User: I want to see what happens if automation risk is 0.2 → intent = what_if
+User: We're in the engineering team → intent = give_context
+User: I'm done → intent = end
+\"\"\"
+
+def interpret_user_input(user_input):
+    import openai
+    response = openai.ChatCompletion.create(
+        model=\"gpt-4\",  # Or your Ollama / local model
+        messages=[
+            {\"role\": \"system\", \"content\": SYSTEM_PROMPT},
+            {\"role\": \"user\", \"content\": user_input}
+        ],
+        temperature=0,
+    )
+    content = response[\"choices\"][0][\"message\"][\"content\"]
+    return json.loads(content)
