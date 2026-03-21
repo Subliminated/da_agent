@@ -1,0 +1,69 @@
+# Proof of Concept: Iterative LLM-Powered Code Generation and Execution in Python
+
+## Overview
+
+This document outlines a pattern for leveraging Large Language Models (LLMs) to generate Python code, execute it, capture errors, and iteratively improve the code based on feedback. This approach is widely used in modern AI-assisted development environments and is particularly effective for rapid prototyping and proof-of-concept projects.
+
+## Pattern Steps
+
+1. **Prompt LLM for Code Generation**
+    - Provide the LLM with a task description or problem statement.
+    - The LLM generates Python code to solve the task.
+
+2. **Execute Generated Code**
+    - Run the generated code in a controlled environment (e.g., subprocess, sandbox).
+    - Capture standard output, standard error, and exceptions.
+
+3. **Capture and Analyze Errors**
+    - If execution fails, collect error messages and stack traces.
+    - Summarize errors to provide concise feedback to the LLM.
+
+4. **Iterative Feedback Loop**
+    - Feed the error summary and original task back to the LLM.
+    - The LLM revises the code based on the new context.
+    - Repeat steps 2-4 until the code executes successfully or a stopping condition is met.
+
+## Example Workflow
+
+1. **User Input:**  
+    "Write a function to calculate the factorial of a number."
+
+2. **LLM Output:**  
+    ```python
+    def factorial(n):
+         if n == 0:
+              return 1
+         else:
+              return n * factorial(n-1)
+    ```
+
+3. **Execution:**  
+    Run `factorial('five')`  
+    **Error:** `TypeError: unsupported operand type(s) for -: 'str' and 'int'`
+
+4. **Feedback to LLM:**  
+    "TypeError when calling factorial('five'): unsupported operand type(s) for -: 'str' and 'int'"
+
+5. **LLM Revision:**  
+    ```python
+    def factorial(n):
+         if not isinstance(n, int) or n < 0:
+              raise ValueError("Input must be a non-negative integer.")
+         if n == 0:
+              return 1
+         else:
+              return n * factorial(n-1)
+    ```
+
+6. **Repeat Execution and Feedback** until the code works as intended.
+
+## Implementation Considerations
+
+- **Security:** Always execute untrusted code in a sandboxed environment.
+- **Timeouts:** Prevent infinite loops or long-running code.
+- **Prompt Engineering:** Clear, concise prompts yield better code from LLMs.
+- **Error Summarization:** Automated extraction of relevant error messages improves feedback quality.
+
+## Conclusion
+
+This iterative pattern enables rapid development and debugging of code using LLMs. It is especially useful for proof-of-concept projects where speed and flexibility are prioritized over production robustness.

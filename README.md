@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Data Analyst Agent
 
 Starter repository structure and development guide for a data analyst agent with:
@@ -563,3 +564,6 @@ If you want the most pragmatic first version, use:
 ## Current State
 
 This repository now contains the folder structure needed to start implementation. No runtime code has been added yet; only scaffolding and documentation have been created.
+=======
+# da_agent
+>>>>>>> origin/main
