@@ -10,6 +10,7 @@ import json
 import threading
 import asyncio
 import time
+from typing import Any
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ def _generate_data_hash(data_read: bytes) -> str:
     hash_str = hashlib.sha256(data_read).hexdigest()
     return hash_str
 
-def _load_index() -> dict:
+def _load_index() -> dict[str, Any]:
     try:
         with open(HASH_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -44,12 +45,12 @@ def _save_index(index: dict) -> None:
         json.dump(index, f, ensure_ascii=False, indent=2)
     os.replace(tmp, HASH_FILE)  # atomic on POSIX
 
-def get_by_hash(file_hash: str) -> str | None:
+def get_by_hash(file_hash: str) -> dict[str,Any] | None:
     with _index_lock:
         index = _load_index()
         return index.get(file_hash, None)
 
-def insert_hash(file_hash: str, meta: str) -> None:
+def insert_hash(file_hash: str, meta: dict[str, Any]) -> None:
     """
     Store a file hash and its metadata in the index.
     Args:
