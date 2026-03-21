@@ -1,0 +1,14 @@
+{
+  "172caf2101f11c1be29ca710a88f94be498aab3b5d2a0f1f6110eacbed93b190": {
+    "dataset_id": "a4691a74-a67f-4a3a-9a02-b2adbc843727",
+    "stored_path": "/Users/gordonlam/Documents/GitHub/data_analyst_agent/backend/app/storage/raw_uploads/a4691a74-a67f-4a3a-9a02-b2adbc843727__example.csv",
+    "filename": "example.csv",
+    "created_at": 1774070442.581651
+  },
+  "4949887930318a0a735f8c2554ddfe10a82fb2fb8637f5ea2b6ca54f185a573f": {
+    "dataset_id": "7861fe23-350e-4000-9fe6-efd5966d22f2",
+    "stored_path": "/Users/gordonlam/Documents/GitHub/data_analyst_agent/backend/app/storage/raw_uploads/7861fe23-350e-4000-9fe6-efd5966d22f2__ASXListedCompanies (2).csv",
+    "filename": "ASXListedCompanies (2).csv",
+    "created_at": 1774070494.248998
+  }
+}

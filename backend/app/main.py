@@ -25,13 +25,12 @@ PARSED = os.path.abspath(os.path.join(BASE, "parsed_datasets"))
 ARTIFACTS = os.path.abspath(os.path.join(BASE, "job_artifacts"))
 os.makedirs(RAW, exist_ok=True)
 os.makedirs(PARSED, exist_ok=True)
-os.makedirs(ARTIFACTS, exist_ok=True)
+#os.makedirs(ARTIFACTS, exist_ok=True)
 
 
 @app.get("/api/v1/health")
 async def health():
     return {"status": "ok"}
-
 
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
@@ -40,7 +39,6 @@ async def add_request_id(request: Request, call_next):
     response = await call_next(request)
     response.headers["x-request-id"] = request_id
     return response
-
 
 # include router lazily to avoid import cycles
 from .api.v1.routes import upload as upload_router
