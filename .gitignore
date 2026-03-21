@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Local storage and generated artifacts
+backend/storage/raw_uploads/*
+backend/storage/parsed_datasets/*
+backend/storage/job_artifacts/*
+
+# Keep directory placeholders
+!backend/storage/raw_uploads/.gitkeep
+!backend/storage/parsed_datasets/.gitkeep
+!backend/storage/job_artifacts/.gitkeep
