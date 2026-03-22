@@ -42,4 +42,6 @@ async def add_request_id(request: Request, call_next):
 
 # include router lazily to avoid import cycles
 from .api.v1.routes import upload as upload_router
+from .api.v1.routes import respond as respond_router
 app.include_router(upload_router.router, prefix="/api/v1")
+app.include_router(respond_router.router, prefix="/api/v1")

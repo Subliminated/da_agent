@@ -29,3 +29,6 @@ STORAGE_ROOT = BACKEND_ROOT / "storage"
 RAW_UPLOADS_DIR = STORAGE_ROOT / "raw_uploads"
 UPLOAD_HASH_DIR = STORAGE_ROOT / "upload_hash"
 UPLOAD_HASH_INDEX_FILE = UPLOAD_HASH_DIR / "index.json"
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
