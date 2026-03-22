@@ -4,7 +4,6 @@ import aiofiles
 import os
 from uuid import uuid4
 from pydantic import BaseModel
-import glob
 import hashlib
 import json
 import threading
@@ -12,12 +11,13 @@ import asyncio
 import time
 from typing import Any
 
+from ....core.config import RAW_UPLOADS_DIR, STORAGE_ROOT, UPLOAD_HASH_DIR, UPLOAD_HASH_INDEX_FILE
+
 router = APIRouter()
 
-BASE_STORAGE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "storage"))
-RAW_DIR = os.path.join(BASE_STORAGE, "raw_uploads")
-HASH_DIR = os.path.join(BASE_STORAGE, "upload_hash")
-HASH_FILE = os.path.join(HASH_DIR,"index.json")
+RAW_DIR = str(RAW_UPLOADS_DIR)
+HASH_DIR = str(UPLOAD_HASH_DIR)
+HASH_FILE = str(UPLOAD_HASH_INDEX_FILE)
 
 # Create hashing locks to avoid data correction and call blocking for asynchronous calls 
 _index_lock = threading.Lock()
@@ -132,9 +132,10 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     # Atomic move
     os.replace(temp_dest, final_dest)
 
+    relative_stored_path = os.path.relpath(final_dest, str(STORAGE_ROOT))
     meta = {
         "dataset_id": dataset_id,
-        "stored_path": final_dest,
+        "stored_path": relative_stored_path,
         "filename": filename,
         "created_at": time.time(),
     }
@@ -144,7 +145,7 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     payload = {
         "dataset_id": dataset_id,
         "filename": filename,
-        "stored_path": final_dest,
+        "stored_path": relative_stored_path,
         "status": "uploaded",
     }
     return JSONResponse(status_code=201, content=payload)
@@ -166,57 +167,4 @@ def structured_error(status_code: int, code: str, message: str, details: dict | 
     if details is not None:
         payload["error"]["details"] = details
     raise HTTPException(status_code=status_code, detail=payload)
-
-# route endpoint to handle queries from users - gives 422 automatically if bad input
-@router.post("/dataset/jobs")
-async def respond_job(payload: AnalysisJobRequest) -> dict:
-    """
-    Process an analysis job request and queue it for asynchronous processing.
-    This function validates the incoming analysis job request payload, ensures
-    required fields are present, and initiates the data analysis workflow for
-    the specified dataset.
-    Args:
-        payload (AnalysisJobRequest): The analysis job request containing:
-            - dataset_id (str): The unique identifier of the dataset to analyze
-            - user_prompt (str): The user's natural language query or instruction
-              for data analysis
-    Returns:
-        dict: A response dictionary containing:
-            - status (str): Job status indicator, typically "accepted"
-            - dataset_id (str): The dataset ID that was submitted for processing
-    Raises:
-        HTTPException: If dataset_id or user_prompt is missing or empty
-            (status_code=400, detail="dataset_id and user_prompt required")
-    Example:
-        >>> payload = AnalysisJobRequest(
-        ...     dataset_id="ds_12345",
-        ...     user_prompt="Show me the sales trends"
-        ... )
-        >>> response = await respond_job(payload)
-        >>> print(response)
-        {'status': 'accepted', 'dataset_id': 'ds_12345'}
-    """
-    
-    # validation of payload and request handler
-    dataset_id = payload.dataset_id.strip()
-    user_prompt = payload.user_prompt.strip()
-
-    # If validatioon succeeds, find the id
-    if not dataset_id or not user_prompt:
-        #raise HTTPException(status_code=400, detail="dataset_id and user_prompt required")
-        structured_error(status.HTTP_400_BAD_REQUEST, "MISSING_FIELDS", "dataset_id and user_prompt required")
-
-    stored_path = _validate_dataset_id(dataset_id)
-    # Process, the data with a function
-    if not stored_path:
-        #raise HTTPException(status_code=404, detail="dataset_id not found")
-        structured_error(status.HTTP_404_NOT_FOUND, "DATASET_NOT_FOUND", "dataset_id not found")
-
-    return {"status": "accepted", "dataset_id": dataset_id}
-
-def _validate_dataset_id(dataset_id: str) -> str | None:
-    matches = glob.glob(os.path.join(RAW_DIR, f"{dataset_id}*"))
-    # Handle duplicate ID's 
-    return matches[0] if (len(matches) > 0) else None
-
 
