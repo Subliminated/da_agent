@@ -4,6 +4,23 @@ import os
 from pathlib import Path
 
 
+def _load_secrets_file(backend_root: Path) -> None:
+    """Load KEY=VALUE lines from backend/.secrets into os.environ."""
+    secrets_path = backend_root / ".secrets"
+    if not secrets_path.exists() or not secrets_path.is_file():
+        return
+
+    for line in secrets_path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        # Do not override values that are already set by the environment.
+        os.environ.setdefault(key, value.strip())
+
 def _resolve_backend_root() -> Path:
     """Resolve backend project root, preferring BACKEND_ROOT or current cwd."""
     env_root = os.getenv("BACKEND_ROOT")
@@ -25,6 +42,7 @@ def _resolve_backend_root() -> Path:
 
 
 BACKEND_ROOT = _resolve_backend_root()
+_load_secrets_file(BACKEND_ROOT)
 STORAGE_ROOT = BACKEND_ROOT / "storage"
 RAW_UPLOADS_DIR = STORAGE_ROOT / "raw_uploads"
 UPLOAD_HASH_DIR = STORAGE_ROOT / "upload_hash"

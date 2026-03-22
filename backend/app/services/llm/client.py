@@ -7,7 +7,6 @@ from openai import OpenAI
 
 from ...core.config import OPENAI_API_KEY, OPENAI_MODEL
 
-
 @dataclass
 class LLMClient:
     """Minimal OpenAI client wrapper with optional conversational memory."""
@@ -28,7 +27,7 @@ class LLMClient:
         completion = self._client.chat.completions.create(
             model=self.model,
             messages=messages,
-            temperature=0.2,
+            temperature=0.0,
         )
 
         text = completion.choices[0].message.content or ""
@@ -38,3 +37,6 @@ class LLMClient:
         self.memory.append({"role": "assistant", "content": assistant_reply})
 
         return assistant_reply
+
+if __name__ == "__main__":
+    client = LLMClient()

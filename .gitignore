@@ -61,6 +61,7 @@ out/
 # Environment files
 .env
 .env.*
+backend/.secrets
 
 # Coverage reports
 coverage/
