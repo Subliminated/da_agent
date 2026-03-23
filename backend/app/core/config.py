@@ -48,5 +48,10 @@ RAW_UPLOADS_DIR = STORAGE_ROOT / "raw_uploads"
 UPLOAD_HASH_DIR = STORAGE_ROOT / "upload_hash"
 UPLOAD_HASH_INDEX_FILE = UPLOAD_HASH_DIR / "index.json"
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# LLM runtime config
+# For local Ollama-compatible routing, use:
+#   LLM_BASE_URL=http://localhost:11434/v1
+#   LLM_MODEL=ollama/llama3.2:3b
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "ollama/llama3.2:3b")
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
