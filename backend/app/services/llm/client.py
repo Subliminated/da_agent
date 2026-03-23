@@ -20,6 +20,13 @@ class LLMClient:
             raise ValueError("LLM_MODEL is not set")
 
     def chat(self, prompt: str, system_prompt: str = "You are a helpful data analyst assistant.") -> str:
+        return self.chat_with_usage(prompt, system_prompt=system_prompt)["reply"]
+
+    def chat_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str = "You are a helpful data analyst assistant.",
+    ) -> dict[str, Any]:
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}, *self.memory]
         messages.append({"role": "user", "content": prompt})
 
@@ -35,10 +42,22 @@ class LLMClient:
         text = parsed.choices[0].message.content or ""
         assistant_reply = text.strip()
 
+        usage_raw = getattr(parsed, "usage", None)
+        prompt_tokens = int(getattr(usage_raw, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage_raw, "completion_tokens", 0) or 0)
+        total_tokens = int(getattr(usage_raw, "total_tokens", prompt_tokens + completion_tokens) or 0)
+
         self.memory.append({"role": "user", "content": prompt})
         self.memory.append({"role": "assistant", "content": assistant_reply})
 
-        return assistant_reply
+        return {
+            "reply": assistant_reply,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+        }
 
 if __name__ == "__main__":
     query = "what is the molecular formula for acryniltrile"

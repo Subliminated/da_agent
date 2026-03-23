@@ -12,5 +12,13 @@
     "filename": "Bankdata.csv",
     "created_at": 1774266259.118046,
     "file_hash": "6ea8da5d2e76a47dc9a115df312e776161c2a25ece4ee524547e2bd87009fea7"
+  },
+  "744b8ba6228bfe0b5dbb67beb30d98f1588689505195cf2615814b4267cf1527": {
+    "dataset_id": "72a31157-7347-4f1b-a5d1-d5894dafb6b1",
+    "stored_path": "raw_uploads/72a31157-7347-4f1b-a5d1-d5894dafb6b1__train.csv",
+    "filename": "train.csv",
+    "created_at": 1774270119.446416,
+    "source_label": "trains",
+    "file_hash": "744b8ba6228bfe0b5dbb67beb30d98f1588689505195cf2615814b4267cf1527"
   }
 }

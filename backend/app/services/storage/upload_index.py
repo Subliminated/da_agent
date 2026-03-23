@@ -5,20 +5,20 @@ import os
 import threading
 from typing import Any
 
-from app.core.config import UPLOAD_HASH_DIR, UPLOAD_HASH_INDEX_FILE
 
-_INDEX_LOCK = threading.Lock()
+from app.core.config import UPLOAD_HASH_DIR
+
+_INDEX_LOCK = threading.Lock() 
 
 _HASH_INDEX_FILE = str(UPLOAD_HASH_DIR / "by_hash.json")
 _DATASET_INDEX_FILE = str(UPLOAD_HASH_DIR / "by_dataset_id.json")
-_LEGACY_INDEX_FILE = str(UPLOAD_HASH_INDEX_FILE)
+
 
 _CACHE_BY_HASH: dict[str, dict[str, Any]] = {}
 _CACHE_BY_DATASET_ID: dict[str, dict[str, Any]] = {}
-_CACHE_STATE: tuple[float | None, float | None, float | None] | None = None
+_CACHE_STATE: tuple[float | None, float | None] | None = None
 
 os.makedirs(str(UPLOAD_HASH_DIR), exist_ok=True)
-
 
 def _normalize_meta(meta: Any, fallback_hash: str | None = None) -> dict[str, Any] | None:
     if not isinstance(meta, dict):
@@ -32,16 +32,25 @@ def _normalize_meta(meta: Any, fallback_hash: str | None = None) -> dict[str, An
     normalized["dataset_id"] = dataset_id.strip()
     if fallback_hash and "file_hash" not in normalized:
         normalized["file_hash"] = fallback_hash
-    return normalized
 
+    source_label = normalized.get("source_label")
+    if isinstance(source_label, str):
+        source_label = source_label.strip()
+        if source_label:
+            normalized["source_label"] = source_label
+        else:
+            normalized.pop("source_label", None)
+    else:
+        normalized.pop("source_label", None)
+
+    return normalized
 
 def _safe_mtime(path: str) -> float | None:
     try:
         return os.path.getmtime(path)
     except FileNotFoundError:
         return None
-
-
+    
 def _load_json_map(path: str) -> dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -53,34 +62,10 @@ def _load_json_map(path: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _extract_from_legacy(legacy: Any) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    by_hash: dict[str, dict[str, Any]] = {}
-    by_dataset_id: dict[str, dict[str, Any]] = {}
-
-    if isinstance(legacy, dict) and "by_hash" in legacy:
-        candidate = legacy.get("by_hash")
-        if isinstance(candidate, dict):
-            legacy = candidate
-
-    if not isinstance(legacy, dict):
-        return by_hash, by_dataset_id
-
-    for file_hash, meta in legacy.items():
-        if not isinstance(file_hash, str):
-            continue
-        normalized = _normalize_meta(meta, fallback_hash=file_hash)
-        if not normalized:
-            continue
-        by_hash[file_hash] = normalized
-        by_dataset_id[normalized["dataset_id"]] = normalized
-
-    return by_hash, by_dataset_id
-
-
 def _load_indexes_unlocked() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     global _CACHE_BY_HASH, _CACHE_BY_DATASET_ID, _CACHE_STATE
 
-    state = (_safe_mtime(_HASH_INDEX_FILE), _safe_mtime(_DATASET_INDEX_FILE), _safe_mtime(_LEGACY_INDEX_FILE))
+    state = (_safe_mtime(_HASH_INDEX_FILE), _safe_mtime(_DATASET_INDEX_FILE))
     if _CACHE_STATE == state:
         return _CACHE_BY_HASH, _CACHE_BY_DATASET_ID
 
@@ -111,13 +96,6 @@ def _load_indexes_unlocked() -> tuple[dict[str, dict[str, Any]], dict[str, dict[
         if isinstance(file_hash, str) and file_hash:
             by_hash[file_hash] = normalized
 
-    # Backward compatibility: if new files are empty, read legacy index.
-    if not by_hash and not by_dataset_id:
-        legacy_map = _load_json_map(_LEGACY_INDEX_FILE)
-        legacy_by_hash, legacy_by_dataset = _extract_from_legacy(legacy_map)
-        by_hash.update(legacy_by_hash)
-        by_dataset_id.update(legacy_by_dataset)
-
     _CACHE_BY_HASH = by_hash
     _CACHE_BY_DATASET_ID = by_dataset_id
     _CACHE_STATE = state
@@ -140,7 +118,7 @@ def _save_indexes_unlocked(by_hash: dict[str, dict[str, Any]], by_dataset_id: di
 
     _CACHE_BY_HASH = by_hash
     _CACHE_BY_DATASET_ID = by_dataset_id
-    _CACHE_STATE = (_safe_mtime(_HASH_INDEX_FILE), _safe_mtime(_DATASET_INDEX_FILE), _safe_mtime(_LEGACY_INDEX_FILE))
+    _CACHE_STATE = (_safe_mtime(_HASH_INDEX_FILE), _safe_mtime(_DATASET_INDEX_FILE))
 
 
 def get_by_hash(file_hash: str) -> dict[str, Any] | None:
@@ -155,6 +133,50 @@ def get_by_dataset_id(dataset_id: str) -> dict[str, Any] | None:
         _, by_dataset_id = _load_indexes_unlocked()
         record = by_dataset_id.get(dataset_id)
         return dict(record) if isinstance(record, dict) else None
+
+
+def get_by_source_label(source_label: str) -> dict[str, Any] | None:
+    lookup = source_label.strip().lower()
+    if not lookup:
+        return None
+
+    with _INDEX_LOCK:
+        _, by_dataset_id = _load_indexes_unlocked()
+
+        candidates: list[dict[str, Any]] = []
+        for record in by_dataset_id.values():
+            if not isinstance(record, dict):
+                continue
+            current_label = record.get("source_label")
+            if isinstance(current_label, str) and current_label.strip().lower() == lookup:
+                candidates.append(record)
+
+        if not candidates:
+            return None
+
+        def _created_at_key(item: dict[str, Any]) -> float:
+            value = item.get("created_at")
+            if isinstance(value, (int, float)):
+                return float(value)
+            return 0.0
+
+        selected = max(candidates, key=_created_at_key)
+        return dict(selected)
+
+
+def list_records() -> list[dict[str, Any]]:
+    with _INDEX_LOCK:
+        _, by_dataset_id = _load_indexes_unlocked()
+        records = [dict(record) for record in by_dataset_id.values() if isinstance(record, dict)]
+
+    def _created_at_key(item: dict[str, Any]) -> float:
+        value = item.get("created_at")
+        if isinstance(value, (int, float)):
+            return float(value)
+        return 0.0
+
+    records.sort(key=_created_at_key, reverse=True)
+    return records
 
 
 def upsert_record(file_hash: str, meta: dict[str, Any]) -> None:

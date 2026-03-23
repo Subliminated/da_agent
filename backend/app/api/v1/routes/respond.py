@@ -1,17 +1,19 @@
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
-from typing import NoReturn
+from pydantic import BaseModel, Field
+from typing import Any, NoReturn, cast
 
 from app.core.config import STORAGE_ROOT
 from app.services.llm import LLMClient
-from app.services.storage import get_by_dataset_id
+from app.services.storage import get_by_dataset_id, get_by_source_label
 
 
 router = APIRouter()
 
 class AnalysisJobRequest(BaseModel):
-    dataset_id: str
+    dataset_selector: str | None = None
+    dataset_id: str | None = None
     user_prompt: str
+    memory: list[dict[str, str]] = Field(default_factory=list)
 
 
 def structured_error(status_code: int, code: str, message: str, details: dict | None = None) -> NoReturn:
@@ -21,8 +23,14 @@ def structured_error(status_code: int, code: str, message: str, details: dict | 
     raise HTTPException(status_code=status_code, detail=payload)
 
 
-def _resolve_stored_path(dataset_id: str) -> str | None:
-    record = get_by_dataset_id(dataset_id)
+def _resolve_record(selector: str) -> dict[str, Any] | None:
+    record = get_by_dataset_id(selector)
+    if record:
+        return record
+    return get_by_source_label(selector)
+
+
+def _resolve_stored_path(record: dict[str, Any]) -> str | None:
     if not record:
         return None
 
@@ -41,30 +49,58 @@ def _format_prompt(dataset_id: str, stored_path: str, user_prompt: str) -> str:
 
 @router.post("/analysis/jobs")
 async def respond_job(payload: AnalysisJobRequest) -> dict:
-    dataset_id = payload.dataset_id.strip()
+    dataset_selector = (payload.dataset_selector or payload.dataset_id or "").strip()
     user_prompt = payload.user_prompt.strip()
 
-    if not dataset_id or not user_prompt:
+    if not dataset_selector or not user_prompt:
         structured_error(
             status.HTTP_400_BAD_REQUEST,
             "MISSING_FIELDS",
-            "dataset_id and user_prompt are required",
+            "dataset_selector (or dataset_id) and user_prompt are required",
         )
 
-    stored_path = _resolve_stored_path(dataset_id)
+    resolved_record = _resolve_record(dataset_selector)
+    if not isinstance(resolved_record, dict):
+        structured_error(
+            status.HTTP_404_NOT_FOUND,
+            "DATASET_NOT_FOUND",
+            "dataset selector not found",
+            {"dataset_selector": dataset_selector},
+        )
+
+    record = cast(dict[str, Any], resolved_record)
+    stored_path = _resolve_stored_path(record)
     if stored_path is None:
         structured_error(
             status.HTTP_404_NOT_FOUND,
             "DATASET_NOT_FOUND",
-            "dataset_id not found",
-            {"dataset_id": dataset_id},
+            "dataset selector not found",
+            {"dataset_selector": dataset_selector},
         )
 
+    resolved_dataset_id = record.get("dataset_id")
+    dataset_id = str(resolved_dataset_id) if isinstance(resolved_dataset_id, str) else ""
+    if not dataset_id:
+        structured_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "INDEX_DATA_INVALID",
+            "dataset record is missing dataset_id",
+        )
+    safe_memory: list[dict[str, str]] = []
+    for message in payload.memory:
+        role = message.get("role")
+        content = message.get("content")
+        if role not in {"user", "assistant", "system"}:
+            continue
+        if not isinstance(content, str) or not content.strip():
+            continue
+        safe_memory.append({"role": role, "content": content.strip()})
+
     try:
-        llm = LLMClient(memory=[])
+        llm = LLMClient(memory=safe_memory)
         # prompt manage stage 
         prompt = _format_prompt(dataset_id, stored_path, user_prompt)
-        llm_response = llm.chat(prompt)
+        llm_response = llm.chat_with_usage(prompt)
     except ValueError as exc:
         structured_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -81,6 +117,8 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
     return {
         "status": "accepted",
         "dataset_id": dataset_id,
-        "result": llm_response,
+        "source_label": record.get("source_label"),
+        "result": llm_response.get("reply", ""),
+        "usage": llm_response.get("usage", {}),
     }
 

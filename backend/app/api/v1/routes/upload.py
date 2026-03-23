@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 import aiofiles
 import os
@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from ....core.config import RAW_UPLOADS_DIR, STORAGE_ROOT
-from ....services.storage import get_by_hash, upsert_record
+from ....services.storage import get_by_hash, list_records, upsert_record
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ CHUNK = 8192
 os.makedirs(RAW_DIR, exist_ok=True)
 
 @router.post("/datasets/upload")
-async def upload_dataset(request: Request, file: UploadFile = File(...)):
+async def upload_dataset(request: Request, file: UploadFile = File(...), source_label: str | None = Form(None)):
     """
     Upload a dataset file to the server.
     This endpoint accepts CSV or XLSX files and stores them in the raw data directory.
@@ -76,6 +76,7 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
             "dataset_id": existing.get("dataset_id") if isinstance(existing, dict) else existing,
             "filename": existing.get("filename") if isinstance(existing, dict) else filename,
             "stored_path": existing.get("stored_path") if isinstance(existing, dict) else None,
+            "source_label": existing.get("source_label") if isinstance(existing, dict) else None,
             "status": "duplicate",
         }
         return JSONResponse(status_code=200, content=payload)
@@ -89,12 +90,16 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     os.replace(temp_dest, final_dest)
 
     relative_stored_path = os.path.relpath(final_dest, str(STORAGE_ROOT))
+    normalized_source_label = source_label.strip() if isinstance(source_label, str) else ""
+
     meta = {
         "dataset_id": dataset_id,
         "stored_path": relative_stored_path,
         "filename": filename,
         "created_at": time.time(),
     }
+    if normalized_source_label:
+        meta["source_label"] = normalized_source_label
 
     await loop.run_in_executor(None, upsert_record, file_hash, meta)
 
@@ -102,9 +107,32 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
         "dataset_id": dataset_id,
         "filename": filename,
         "stored_path": relative_stored_path,
+        "source_label": meta.get("source_label"),
         "status": "uploaded",
     }
     return JSONResponse(status_code=201, content=payload)
+
+
+@router.get("/datasets")
+async def get_datasets() -> JSONResponse:
+    loop = asyncio.get_running_loop()
+    records = await loop.run_in_executor(None, list_records)
+
+    payload: list[dict[str, Any]] = []
+    for record in records:
+        dataset_id = record.get("dataset_id")
+        if not isinstance(dataset_id, str) or not dataset_id:
+            continue
+        payload.append(
+            {
+                "dataset_id": dataset_id,
+                "source_label": record.get("source_label"),
+                "filename": record.get("filename"),
+                "created_at": record.get("created_at"),
+            }
+        )
+
+    return JSONResponse(status_code=200, content={"items": payload})
 
 """
 requestJson(
