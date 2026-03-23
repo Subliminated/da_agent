@@ -3,64 +3,20 @@ from fastapi.responses import JSONResponse
 import aiofiles
 import os
 from uuid import uuid4
-from pydantic import BaseModel
 import hashlib
-import json
-import threading
 import asyncio
 import time
 from typing import Any
 
-from ....core.config import RAW_UPLOADS_DIR, STORAGE_ROOT, UPLOAD_HASH_DIR, UPLOAD_HASH_INDEX_FILE
+from ....core.config import RAW_UPLOADS_DIR, STORAGE_ROOT
+from ....services.storage import get_by_hash, upsert_record
 
 router = APIRouter()
 
 RAW_DIR = str(RAW_UPLOADS_DIR)
-HASH_DIR = str(UPLOAD_HASH_DIR)
-HASH_FILE = str(UPLOAD_HASH_INDEX_FILE)
-
-# Create hashing locks to avoid data correction and call blocking for asynchronous calls 
-_index_lock = threading.Lock()
 
 CHUNK = 8192
-os.makedirs(HASH_DIR, exist_ok=True)
 os.makedirs(RAW_DIR, exist_ok=True)
-
-##### helper for hash
-def _generate_data_hash(data_read: bytes) -> str:
-    "Create unique hash for file data using hash function"
-    hash_str = hashlib.sha256(data_read).hexdigest()
-    return hash_str
-
-def _load_index() -> dict[str, Any]:
-    try:
-        with open(HASH_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-def _save_index(index: dict) -> None:
-    tmp = HASH_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, HASH_FILE)  # atomic on POSIX
-
-def get_by_hash(file_hash: str) -> dict[str,Any] | None:
-    with _index_lock:
-        index = _load_index()
-        return index.get(file_hash, None)
-
-def insert_hash(file_hash: str, meta: dict[str, Any]) -> None:
-    """
-    Store a file hash and its metadata in the index.
-    Args:
-        file_hash (str): The hash identifier of the file.
-        meta (dict): Metadata associated with the file hash. (dataset ID)
-    """
-    with _index_lock:
-        index = _load_index()
-        index[file_hash] = meta
-        _save_index(index)
 
 @router.post("/datasets/upload")
 async def upload_dataset(request: Request, file: UploadFile = File(...)):
@@ -140,7 +96,7 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
         "created_at": time.time(),
     }
 
-    await loop.run_in_executor(None, insert_hash, file_hash, meta)
+    await loop.run_in_executor(None, upsert_record, file_hash, meta)
 
     payload = {
         "dataset_id": dataset_id,
@@ -156,15 +112,3 @@ requestJson(
 , { method: "POST", body: JSON.stringify(...)
 , headers: {...} })
 """
-
-#pydantic validator to ensure payload is good
-class AnalysisJobRequest(BaseModel):
-    dataset_id: str
-    user_prompt: str
-
-def structured_error(status_code: int, code: str, message: str, details: dict | None = None):
-    payload = {"error": {"code": code, "message": message, "details": None}}
-    if details is not None:
-        payload["error"]["details"] = details
-    raise HTTPException(status_code=status_code, detail=payload)
-
