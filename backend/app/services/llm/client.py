@@ -4,8 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from litellm import completion
 
-from ...core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-
+from app.core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
 @dataclass
 class LLMClient:
@@ -40,3 +39,8 @@ class LLMClient:
         self.memory.append({"role": "assistant", "content": assistant_reply})
 
         return assistant_reply
+
+if __name__ == "__main__":
+    query = "what is the molecular formula for acryniltrile"
+    client = LLMClient()
+    print(client.chat(prompt = query))
