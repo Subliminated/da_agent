@@ -4,32 +4,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 from litellm import completion
+from pydantic import BaseModel
+import os
 
 from app.core.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-
-_STRUCTURED_RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "analysis_response",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "message": {"type": "string"},
-                "highlights": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "confidence": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high"],
-                },
-            },
-            "required": ["message"],
-            "additionalProperties": True,
-        },
-        "strict": True,
-    },
-}
 
 @dataclass
 class LLMClient:
@@ -61,28 +39,23 @@ class LLMClient:
 
         return {"message": stripped}
 
-    def chat(self, prompt: str, system_prompt: str = "You are a helpful data analyst assistant.") -> str:
-        return self.chat_with_usage(prompt, system_prompt=system_prompt)["reply"]
+    def chat(self, prompt: str) -> str:
+        return self.chat_with_usage(prompt)["reply"]
 
     def chat_with_usage(
         self,
         prompt: str,
+        response_schema: dict[str,Any] | None = None,
         system_prompt: str = "You are a helpful data analyst assistant.",
+        ctx: str = ""
     ) -> dict[str, Any]:
+
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}, *self.memory]
         messages.append({"role": "user", "content": prompt})
 
-        try:
-            response = completion(
-                model=self.model,
-                messages=messages,
-                base_url=self.base_url,
-                api_key=self.api_key,
-                temperature=0.0,
-                response_format=_STRUCTURED_RESPONSE_SCHEMA,
-            )
-        except Exception:
-            # Some providers/models do not support JSON schema response format.
+        response: Any | None = None
+
+        if response_schema is None:
             response = completion(
                 model=self.model,
                 messages=messages,
@@ -90,11 +63,41 @@ class LLMClient:
                 api_key=self.api_key,
                 temperature=0.0,
             )
+        else:
+            last_error: Exception | None = None
+            for attempt in range(1, 4):
+                try:
+                    response = completion(
+                        model=self.model,
+                        messages=messages,
+                        base_url=self.base_url,
+                        api_key=self.api_key,
+                        temperature=0.0,
+                        response_format=response_schema,
+                    )
+                    print(f"RESPONSE IS JSON ENFORCED (attempt {attempt}/3)")
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    print(f"Schema-enforced call failed (attempt {attempt}/3): {exc}")
+                    if attempt == 3:
+                        raise RuntimeError(
+                            "Failed to get schema-enforced response after 3 attempts"
+                        ) from last_error
+
+        if response is None:
+            raise RuntimeError("LLM completion returned no response")
 
         parsed: Any = response
         text = parsed.choices[0].message.content or ""
-        structured_reply = self._coerce_structured_json(text)
-        assistant_reply = json.dumps(structured_reply, ensure_ascii=False)
+        structured_reply = self._coerce_structured_json(text) #In json compatible form
+        
+        if structured_reply.get("confidence",None):
+            print(f"Confidence score found {structured_reply}")
+        else:
+            print("No confidence score")
+        
+        assistant_reply = json.dumps(structured_reply.get("message",""), ensure_ascii=False)
 
         usage_raw = getattr(parsed, "usage", None)
         prompt_tokens = int(getattr(usage_raw, "prompt_tokens", 0) or 0)
@@ -103,7 +106,6 @@ class LLMClient:
 
         self.memory.append({"role": "user", "content": prompt})
         self.memory.append({"role": "assistant", "content": assistant_reply})
-        print(structured_reply )
         return {
             "reply": assistant_reply,
             "reply_json": structured_reply,

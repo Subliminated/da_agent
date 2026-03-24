@@ -1,0 +1,32 @@
+# Create a container to host a code interpreter for my agent to run and execute code.
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY app.py .
+
+RUN pip install \
+    flask \
+    pandas \
+    numpy \
+    matplotlib \
+    seaborn \
+    openpyxl \
+    scikit-learn \
+    joblib
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Create a directory for data to mount a point for csv data
+RUN mkdir /data
+
+# Expose the port the app runs on (5000)
+EXPOSE 8888
+
+# Run the application on docker start
+CMD ["python", "app.py"]
+
+# Build image: docker build -t code-exec-api ./runner
+# Run image: docker run -d --name code-exec-api -p 8888:8888 --cpus=1.0 --memory=512m --pids-limit=100 -v $(pwd)/data:/data code-exec-api
+# Check server is running: curl http://localhost:8888/
+# Check server is running: curl http://localhost:8888/health

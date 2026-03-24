@@ -5,10 +5,8 @@ from pydantic import BaseModel, Field
 from typing import Any, NoReturn, cast
 
 from app.core.config import STORAGE_ROOT
-from app.services.llm import LLMClient
 from app.services.storage import get_by_dataset_id, get_by_source_label
-
-
+from app.domain.analyse_job import respond_to_job
 router = APIRouter()
 
 class AnalysisJobRequest(BaseModel):
@@ -41,13 +39,6 @@ def _resolve_stored_path(record: dict[str, Any]) -> str | None:
         return None
 
     return str(STORAGE_ROOT / stored_path)
-
-def _format_prompt(dataset_id: str, stored_path: str, user_prompt: str) -> str:
-    return (
-        "You are analyzing an uploaded dataset. "
-        #f"dataset_id={dataset_id}; stored_path={stored_path}. "
-        f"User request: {user_prompt}"
-    )
 
 @router.post("/analysis/jobs")
 async def respond_job(payload: AnalysisJobRequest) -> dict:
@@ -89,6 +80,8 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
             "dataset record is missing dataset_id",
         )
 
+    ### CHAT CONVERSATION PAYLOAD
+    # Get memory of conversation
     safe_memory: list[dict[str, str]] = []
     for message in payload.memory:
         role = message.get("role")
@@ -99,26 +92,11 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
             continue
         safe_memory.append({"role": role, "content": content.strip()})
 
+    # Retreive dataset ID data
     try:
-        llm = LLMClient(memory=safe_memory)
-        # prompt manage stage 
-        prompt = _format_prompt(dataset_id, stored_path, user_prompt)
-        llm_response = llm.chat_with_usage(prompt)
-
-        raw_reply = llm_response.get("reply")
-        parsed_reply = llm_response.get("reply_json")
-
-        if not isinstance(parsed_reply, dict):
-            if isinstance(raw_reply, str):
-                try:
-                    maybe = json.loads(raw_reply)
-                    parsed_reply = maybe if isinstance(maybe, dict) else {"message": raw_reply}
-                except json.JSONDecodeError:
-                    parsed_reply = {"message": raw_reply}
-            else:
-                parsed_reply = {"message": ""}
-
-        llm_response["reply_json"] = parsed_reply
+        llm_response = respond_to_job(user_prompt, safe_memory, dataset_id)
+    
+    # CONVERSATION END
     except ValueError as exc:
         structured_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
