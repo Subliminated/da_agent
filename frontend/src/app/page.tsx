@@ -167,7 +167,7 @@ export default function HomePage() {
         }
       });
 
-      const responseText = getValueIfString(data, "result") || "";
+      const responseText = getResultAsText(data);
       const tokens = getNestedNumber(data, "usage", "total_tokens");
 
       if (responseText) {
@@ -393,4 +393,25 @@ function getNestedNumber(data: unknown, parentKey: string, key: string) {
 
   const value = (parent as Record<string, unknown>)[key];
   return typeof value === "number" ? value : 0;
+}
+
+function getResultAsText(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+
+  const raw = (data as Record<string, unknown>).result;
+  if (typeof raw === "string") {
+    return raw;
+  }
+
+  if (raw && typeof raw === "object") {
+    const message = (raw as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+    return JSON.stringify(raw, null, 2);
+  }
+
+  return "";
 }

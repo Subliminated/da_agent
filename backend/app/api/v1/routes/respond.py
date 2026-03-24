@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Any, NoReturn, cast
@@ -86,6 +88,7 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
             "INDEX_DATA_INVALID",
             "dataset record is missing dataset_id",
         )
+
     safe_memory: list[dict[str, str]] = []
     for message in payload.memory:
         role = message.get("role")
@@ -101,6 +104,21 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
         # prompt manage stage 
         prompt = _format_prompt(dataset_id, stored_path, user_prompt)
         llm_response = llm.chat_with_usage(prompt)
+
+        raw_reply = llm_response.get("reply")
+        parsed_reply = llm_response.get("reply_json")
+
+        if not isinstance(parsed_reply, dict):
+            if isinstance(raw_reply, str):
+                try:
+                    maybe = json.loads(raw_reply)
+                    parsed_reply = maybe if isinstance(maybe, dict) else {"message": raw_reply}
+                except json.JSONDecodeError:
+                    parsed_reply = {"message": raw_reply}
+            else:
+                parsed_reply = {"message": ""}
+
+        llm_response["reply_json"] = parsed_reply
     except ValueError as exc:
         structured_error(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -118,7 +136,7 @@ async def respond_job(payload: AnalysisJobRequest) -> dict:
         "status": "accepted",
         "dataset_id": dataset_id,
         "source_label": record.get("source_label"),
-        "result": llm_response.get("reply", ""),
+        "result": llm_response.get("reply_json", {"message": ""}),
         "usage": llm_response.get("usage", {}),
     }
 
