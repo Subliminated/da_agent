@@ -2,17 +2,17 @@
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY app.py .
+COPY ./app.py /app/app.py
 
-RUN pip install \
-    flask \
-    pandas \
-    numpy \
-    matplotlib \
-    seaborn \
-    openpyxl \
-    scikit-learn \
-    joblib
+RUN pip install --no-cache-dir \
+    flask==3.0.3 \
+    pandas==2.2.3 \
+    numpy==1.26.4 \
+    matplotlib==3.8.4 \
+    seaborn==0.13.2 \
+    openpyxl==3.1.5 \
+    scikit-learn==1.5.2 \
+    joblib==1.4.2
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -26,7 +26,10 @@ EXPOSE 8888
 # Run the application on docker start
 CMD ["python", "app.py"]
 
-# Build image: docker build -t code-exec-api ./runner
-# Run image: docker run -d --name code-exec-api -p 8888:8888 --cpus=1.0 --memory=512m --pids-limit=100 -v $(pwd)/data:/data code-exec-api
-# Check server is running: curl http://localhost:8888/
+# Build image (from repo root):
+# docker build -f backend/app/services/code_executor/dockerfile -t code-exec-api backend/app/services/code_executor
+# Run image (from repo root):
+# docker run -d --name code-exec-api -p 8888:8888 --cpus=1.0 --memory=512m --pids-limit=100 \
+#   -v "$(pwd)/backend/storage/raw_uploads:/data/raw_uploads:ro" \
+#   code-exec-api
 # Check server is running: curl http://localhost:8888/health

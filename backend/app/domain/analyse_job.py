@@ -9,10 +9,12 @@ from typing import Any
 import os
 import requests
 
-from app.core.config import BACKEND_ROOT, STORAGE_ROOT
+from app.core.config import BACKEND_ROOT
 from app.services.llm.client import LLMClient
+from app.services.storage import get_by_dataset_id
 
 MAX_CALLS = 3
+CONTAINER_DATA_ROOT = "/data"
 
 _STRUCTURED_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
@@ -79,22 +81,47 @@ def _coerce_structured_json(llm_response) -> dict[str,Any]:
     llm_response["reply_json"] = parsed_llm_response
     return llm_response
 
-def _format_prompt(dataset_id: str, stored_path: str, user_prompt: str) -> str:
-    return (
-        "You are analyzing an uploaded dataset. "
-        #f"dataset_id={dataset_id}; stored_path={stored_path}. "
-        f"User request: {user_prompt}"
-    )
+def _resolve_stored_path_from_dataset_id(dataset_id: str) -> str | None:
+    if not dataset_id:
+        return None
 
-def _resolve_stored_path(record: dict[str, Any]) -> str | None:
-    if not record:
+    record = get_by_dataset_id(dataset_id)
+    if not isinstance(record, dict):
         return None
 
     stored_path = record.get("stored_path")
-    if not isinstance(stored_path, str) or not stored_path:
+    if not isinstance(stored_path, str) or not stored_path.strip():
         return None
 
-    return str(STORAGE_ROOT / stored_path)
+    return stored_path.strip()
+
+def _to_container_data_path(stored_path: str) -> str:
+    normalized = stored_path.strip().lstrip("/")
+    return f"{CONTAINER_DATA_ROOT}/{normalized}"
+
+
+def _format_prompt(dataset_id: str, user_prompt: str) -> str:
+    stored_path = _resolve_stored_path_from_dataset_id(dataset_id)
+
+    if stored_path:
+        container_stored_path = _to_container_data_path(stored_path)
+        data_context = (
+            f"dataset_id={dataset_id}; "
+            f"stored_path={container_stored_path}; "
+            "storage_access=read_only"
+        )
+    else:
+        data_context = (
+            f"dataset_id={dataset_id}; "
+            "stored_path=unknown"
+        )
+
+    return (
+        "You are analyzing an uploaded dataset. "
+        f"{data_context}. "
+        "If you generate code, read the file from stored_path and do not write back to that path. "
+        f"User request: {user_prompt}"
+    )
 
 def code_executor(code: str) -> str:
     try:
@@ -128,15 +155,15 @@ def respond_to_job(
     """The actual logic layer that manages the response callback logic assuming validations complete
     Enforces Json output
     """
-    supervisor = LLMClient(memory=memory) # Reads intent and rephrases into python question
-
+    #supervisor = LLMClient(memory=memory) # Reads intent and rephrases into python question
+    supervisor = LLMClient()
     # System prompt:
     #SYS_PROMPT_FILE
 
     # Gather stats for LLM context to be ingested into system prompt
 
-    # prompt manage stage 
-    #prompt = _format_prompt(dataset_id, stored_path, user_prompt)
+    user_prompt = prompt
+    prompt = _format_prompt(dataset_id, user_prompt)
     
     # First call to determine the intent
     supervisor_response = supervisor.chat_with_usage(
@@ -149,6 +176,7 @@ def respond_to_job(
         "reply_json",
         {"message": "", "code": "", "call_tool": False, "answered": False},
     )
+    print(f"\033[94m{json_response}\033[0m")
 
     # Tool Call loop to answer question 3 tries
     count = 0
@@ -170,7 +198,12 @@ def respond_to_job(
             {code_execution_response}
 
             Original question from user:
+            {user_prompt}
+
+            Dataset context:
             {prompt}
+
+            If the code has an error, attemp to address it first, before making a response
             """
             # Run tool call (with memory)
             supervisor_response = supervisor.chat_with_usage(
@@ -182,6 +215,8 @@ def respond_to_job(
                 "reply_json",
                 {"message": "", "code": "", "call_tool": False, "answered": False},
             )
+            print(f"\033[94m{json_response}\033[0m")
+
         else:
             # No tool requested, force completion to avoid spinning.
             json_response.update({"answered": True})
@@ -194,7 +229,6 @@ def respond_to_job(
             supervisor_response["reply_json"] = json_response
     
     #Update the final supervisor response
-    # Final Supervisor response
     supervisor_response = _coerce_structured_json(supervisor_response) 
     
     return supervisor_response

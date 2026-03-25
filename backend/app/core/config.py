@@ -41,9 +41,17 @@ def _resolve_backend_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _ensure_storage_dirs(storage_root: Path) -> None:
+    for folder in ("raw_uploads", "upload_hash", "parsed_datasets", "job_artifacts"):
+        (storage_root / folder).mkdir(parents=True, exist_ok=True)
+
+
 BACKEND_ROOT = _resolve_backend_root()
 _load_secrets_file(BACKEND_ROOT)
 STORAGE_ROOT = BACKEND_ROOT / "storage"
+
+_ensure_storage_dirs(STORAGE_ROOT)
+
 RAW_UPLOADS_DIR = STORAGE_ROOT / "raw_uploads"
 UPLOAD_HASH_DIR = STORAGE_ROOT / "upload_hash"
 UPLOAD_HASH_INDEX_FILE = UPLOAD_HASH_DIR / "index.json"

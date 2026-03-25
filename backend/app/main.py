@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request
 # Without CORS, any upload routes from front end will be blocked 
 from fastapi.middleware.cors import CORSMiddleware 
 from uuid import uuid4
-import os
 
 app = FastAPI(title="data-analyst-agent-backend")
 
@@ -17,16 +16,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ensure storage dirs exist
-BASE = os.path.join(os.path.dirname(__file__), "..", "..", "storage")
-RAW = os.path.abspath(os.path.join(BASE, "raw_uploads"))
-PARSED = os.path.abspath(os.path.join(BASE, "parsed_datasets"))
-ARTIFACTS = os.path.abspath(os.path.join(BASE, "job_artifacts"))
-os.makedirs(RAW, exist_ok=True)
-os.makedirs(PARSED, exist_ok=True)
-#os.makedirs(ARTIFACTS, exist_ok=True)
-
 
 @app.get("/api/v1/health")
 async def health():

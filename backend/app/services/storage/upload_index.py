@@ -6,7 +6,7 @@ import threading
 from typing import Any
 
 
-from app.core.config import UPLOAD_HASH_DIR
+from app.core.config import STORAGE_ROOT, UPLOAD_HASH_DIR
 
 _INDEX_LOCK = threading.Lock() 
 
@@ -167,7 +167,20 @@ def get_by_source_label(source_label: str) -> dict[str, Any] | None:
 def list_records() -> list[dict[str, Any]]:
     with _INDEX_LOCK:
         _, by_dataset_id = _load_indexes_unlocked()
-        records = [dict(record) for record in by_dataset_id.values() if isinstance(record, dict)]
+        records: list[dict[str, Any]] = []
+        for record in by_dataset_id.values():
+            if not isinstance(record, dict):
+                continue
+
+            stored_path = record.get("stored_path")
+            if not isinstance(stored_path, str) or not stored_path.strip():
+                continue
+
+            absolute_path = STORAGE_ROOT / stored_path
+            if not absolute_path.exists() or not absolute_path.is_file():
+                continue
+
+            records.append(dict(record))
 
     def _created_at_key(item: dict[str, Any]) -> float:
         value = item.get("created_at")
