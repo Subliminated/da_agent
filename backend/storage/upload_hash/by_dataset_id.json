@@ -6,5 +6,13 @@
     "created_at": 1774414176.514343,
     "source_label": "trains yay",
     "file_hash": "744b8ba6228bfe0b5dbb67beb30d98f1588689505195cf2615814b4267cf1527"
+  },
+  "dceed6a3-ce94-48b1-97ca-9b127472d1de": {
+    "dataset_id": "dceed6a3-ce94-48b1-97ca-9b127472d1de",
+    "stored_path": "raw_uploads/dceed6a3-ce94-48b1-97ca-9b127472d1de__CarSeats.csv",
+    "filename": "CarSeats.csv",
+    "created_at": 1774486509.945507,
+    "source_label": "Carseats",
+    "file_hash": "ae6818b28ece006235e27d1210fb94f4779d454633ab4ba85ad83ddba6ad9eb3"
   }
 }

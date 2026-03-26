@@ -106,6 +106,7 @@ class LLMClient:
 
         self.memory.append({"role": "user", "content": prompt})
         self.memory.append({"role": "assistant", "content": assistant_reply})
+        print(f"STRUCTURED REPLY\n:{structured_reply}")
         return {
             "reply": assistant_reply,
             "reply_json": structured_reply,
