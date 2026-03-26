@@ -1,5 +1,10 @@
-from app.domain.analyse_job import _build_executable_code, _execution_succeeded, _is_placeholder_message
-
+from app.domain.analyse_job import (
+    _build_executable_code,
+    _extract_missing_column,
+    _execution_succeeded,
+    _extract_reply_json,
+    _is_placeholder_message,
+)
 
 def test_execution_succeeded_true_when_ok_zero_and_no_stderr() -> None:
     result = {"ok": True, "returncode": 0, "stderr": ""}
@@ -31,3 +36,25 @@ def test_build_executable_code_keeps_existing_loader() -> None:
 def test_placeholder_message_detection() -> None:
     assert _is_placeholder_message("The user has requested for the top 5 rows") is True
     assert _is_placeholder_message("Top 5 rows are shown below") is False
+
+
+def test_extract_reply_json_forces_call_tool_true_when_code_present() -> None:
+    payload = {
+        "reply_json": {
+            "message": "I will run this",
+            "code": "print(df.shape[0])",
+            "call_tool": False,
+        }
+    }
+    parsed = _extract_reply_json(payload)
+    assert parsed["call_tool"] is True
+
+
+def test_extract_missing_column_returns_column_name() -> None:
+    stderr_text = "Traceback...\nKeyError: 'Country'"
+    assert _extract_missing_column(stderr_text) == "Country"
+
+
+def test_extract_missing_column_returns_none_when_not_keyerror() -> None:
+    stderr_text = "ValueError: invalid literal"
+    assert _extract_missing_column(stderr_text) is None

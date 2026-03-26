@@ -4,13 +4,16 @@ This layer is intended to process the actual requst of the user without impactin
 """
 from __future__ import annotations
 
+import csv
 import json
 import logging
+import re
 from typing import Any
 import os
+from pathlib import Path
 import requests
 
-from app.core.config import BACKEND_ROOT, CODE_EXECUTOR_URL
+from app.core.config import BACKEND_ROOT, CODE_EXECUTOR_URL, STORAGE_ROOT
 from app.services.llm.client import LLMClient
 from app.services.storage import get_by_dataset_id
 
@@ -69,6 +72,10 @@ def _coerce_structured_json(llm_response) -> dict[str,Any]:
     if not isinstance(call_tool, bool):
         call_tool = str(call_tool).strip().lower() in {"1", "true", "yes"}
 
+    # Enforce tool execution when code is present.
+    if code.strip():
+        call_tool = True
+
     parsed_llm_response = {
         "message": message,
         "code": code,
@@ -97,6 +104,55 @@ def _to_container_data_path(stored_path: str) -> str:
     return f"{CONTAINER_DATA_ROOT}/{normalized}"
 
 
+def _resolve_local_dataset_file(stored_path: str | None) -> Path | None:
+    if not stored_path:
+        return None
+
+    normalized = stored_path.strip().lstrip("/")
+    storage_root = STORAGE_ROOT.resolve()
+    candidate = (storage_root / normalized).resolve()
+
+    try:
+        candidate.relative_to(storage_root)
+    except ValueError:
+        return None
+
+    if not candidate.exists() or not candidate.is_file():
+        return None
+
+    return candidate
+
+
+def _dataset_columns_context(stored_path: str | None) -> str:
+    local_file = _resolve_local_dataset_file(stored_path)
+    if not local_file:
+        return "available_columns=unknown"
+
+    try:
+        with local_file.open("r", encoding="utf-8", newline="") as csv_file:
+            reader = csv.reader(csv_file)
+            headers = next(reader, [])
+    except Exception:
+        return "available_columns=unknown"
+
+    cleaned = [str(header).strip() for header in headers if str(header).strip()]
+    if not cleaned:
+        return "available_columns=unknown"
+
+    preview = cleaned[:50]
+    serialized_preview = json.dumps(preview, ensure_ascii=True)
+    if len(cleaned) > 50:
+        return f"available_columns={serialized_preview}; available_columns_truncated=true"
+    return f"available_columns={serialized_preview}"
+
+
+def _extract_missing_column(stderr_text: str) -> str | None:
+    match = re.search(r"KeyError:\s*'([^']+)'", stderr_text)
+    if not match:
+        return None
+    return match.group(1)
+
+
 def _format_prompt(dataset_id: str, user_prompt: str) -> str:
     stored_path = _resolve_stored_path_from_dataset_id(dataset_id)
 
@@ -113,10 +169,14 @@ def _format_prompt(dataset_id: str, user_prompt: str) -> str:
             "stored_path=unknown"
         )
 
+    columns_context = _dataset_columns_context(stored_path)
+
     return (
         "You are analyzing an uploaded dataset. "
         f"{data_context}. "
+        f"{columns_context}. "
         "Each code execution runs in a fresh Python process, so always load the dataset from stored_path and define df in every code snippet. "
+        "Only reference columns that exist in available_columns. "
         "If you generate code, read the file from stored_path and do not write back to that path. "
         f"User request: {user_prompt}"
     )
@@ -194,10 +254,14 @@ def _extract_reply_json(payload: dict[str, Any]) -> dict[str, Any]:
     candidate = payload.get("reply_json", _default_reply_json())
     if not isinstance(candidate, dict):
         return _default_reply_json()
+    code = str(candidate.get("code", "") or "")
+    call_tool = bool(candidate.get("call_tool", False))
+    if code.strip():
+        call_tool = True
     return {
         "message": str(candidate.get("message", "") or ""),
-        "code": str(candidate.get("code", "") or ""),
-        "call_tool": bool(candidate.get("call_tool", False)),
+        "code": code,
+        "call_tool": call_tool,
     }
 
 
@@ -214,6 +278,7 @@ def respond_to_job(
     planning_prompt = _format_prompt(dataset_id, user_prompt)
     stored_path = _resolve_stored_path_from_dataset_id(dataset_id)
     container_stored_path = _to_container_data_path(stored_path) if stored_path else None
+    columns_context = _dataset_columns_context(stored_path)
     
     # Step 1: Plan
     supervisor_response = supervisor.chat_with_usage(
@@ -243,15 +308,29 @@ def respond_to_job(
         if _execution_succeeded(code_execution_response):
             break
 
+        stderr_text = str(code_execution_response.get("stderr") or "")
+        missing_column = _extract_missing_column(stderr_text)
+        keyerror_hint = ""
+        if missing_column:
+            keyerror_hint = (
+                f"Detected missing column: {missing_column}. "
+                "Use only columns listed in available_columns."
+            )
+
         repair_prompt = f"""
         Error from triggered code execution call:
-        {code_execution_response.get("stderr")}
+        {stderr_text}
 
         Your original code:
         {json_response.get("code")}
 
         Dataset file path:
         {container_stored_path}
+
+        Dataset column context:
+        {columns_context}
+
+        {keyerror_hint}
 
         Produce corrected python code and set call_tool=true.
         """
@@ -263,6 +342,8 @@ def respond_to_job(
         json_response = _extract_reply_json(supervisor_response)
 
     # Step 4: Finalize
+    executable_code = _build_executable_code(str(json_response.get("code")), container_stored_path)
+
     if _execution_succeeded(code_execution_response):
         finalize_prompt = f"""
         Original question from user:
@@ -271,7 +352,9 @@ def respond_to_job(
         Results from triggered code execution call:
         {code_execution_response.get("stdout")}
 
-        Return final answer using the actual execution output above.
+        {f"This was your executable code: {executable_code}" if executable_code else ""}
+
+        Return final answer using the actual execution output above and explain how you got there.
         Do not paraphrase the request. Include the concrete result in message.
         Set call_tool to false and code to an empty string.
         """
