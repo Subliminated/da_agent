@@ -5,16 +5,18 @@ This layer is intended to process the actual requst of the user without impactin
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 import os
 import requests
 
-from app.core.config import BACKEND_ROOT
+from app.core.config import BACKEND_ROOT, CODE_EXECUTOR_URL
 from app.services.llm.client import LLMClient
 from app.services.storage import get_by_dataset_id
 
 MAX_CALLS = 3
 CONTAINER_DATA_ROOT = "/data"
+LOGGER = logging.getLogger(__name__)
 
 _STRUCTURED_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
@@ -59,7 +61,6 @@ def _coerce_structured_json(llm_response) -> dict[str,Any]:
     message = parsed_llm_response.get("message", "")
     code = parsed_llm_response.get("code", "")
     call_tool = parsed_llm_response.get("call_tool", False)
-    answered = parsed_llm_response.get("answered", False)
 
     if not isinstance(message, str):
         message = str(message)
@@ -67,14 +68,11 @@ def _coerce_structured_json(llm_response) -> dict[str,Any]:
         code = str(code)
     if not isinstance(call_tool, bool):
         call_tool = str(call_tool).strip().lower() in {"1", "true", "yes"}
-    if not isinstance(answered, bool):
-        answered = str(answered).strip().lower() in {"1", "true", "yes"}
 
     parsed_llm_response = {
         "message": message,
         "code": code,
         "call_tool": call_tool,
-        "answered": answered,
     }
 
     llm_response["reply_json"] = parsed_llm_response
@@ -123,9 +121,34 @@ def _format_prompt(dataset_id: str, user_prompt: str) -> str:
         f"User request: {user_prompt}"
     )
 
+
+def _execution_succeeded(result: dict[str, Any]) -> bool:
+    if not result.get("ok"):
+        return False
+
+    returncode = result.get("returncode")
+    stderr = str(result.get("stderr") or "").strip()
+    return returncode == 0 and not stderr
+
+
+def _build_executable_code(code: str, stored_path: str | None) -> str:
+    snippet = str(code or "").strip()
+    if not stored_path:
+        return snippet
+
+    # Guardrail: each run is stateless, so ensure df is defined if model forgot to load it.
+    if "pd.read_csv" in snippet and stored_path in snippet:
+        return snippet
+
+    bootstrap = (
+        "import pandas as pd\n"
+        f"df = pd.read_csv({stored_path!r})\n"
+    )
+    return f"{bootstrap}{snippet}" if snippet else bootstrap
+
 def code_executor(code: str) -> dict[str, Any]:
     try:
-        response = requests.post("http://localhost:8888/run", json={"code": code}, timeout=35)
+        response = requests.post(CODE_EXECUTOR_URL, json={"code": code}, timeout=35)
     except requests.RequestException as exc:
         return {
             "ok": False,
@@ -137,7 +160,7 @@ def code_executor(code: str) -> dict[str, Any]:
         }
     if response.ok:
         result = response.json()
-        print(f"RESULTS OF CODE EXECUTION:\n{result}")
+        LOGGER.info("Code execution finished", extra={"returncode": result.get("returncode")})
         return {
             "ok": True,
             "stdout": result.get("stdout", ""),
@@ -163,6 +186,21 @@ def _is_placeholder_message(message: str) -> bool:
     return "has requested" in lowered or lowered.startswith("the user has requested")
 
 
+def _default_reply_json() -> dict[str, Any]:
+    return {"message": "", "code": "", "call_tool": False}
+
+
+def _extract_reply_json(payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = payload.get("reply_json", _default_reply_json())
+    if not isinstance(candidate, dict):
+        return _default_reply_json()
+    return {
+        "message": str(candidate.get("message", "") or ""),
+        "code": str(candidate.get("code", "") or ""),
+        "call_tool": bool(candidate.get("call_tool", False)),
+    }
+
+
 def respond_to_job(
     prompt: str,
     memory: list[dict[str, str]],
@@ -172,29 +210,19 @@ def respond_to_job(
     Enforces Json output
     """
     supervisor = LLMClient(memory=memory)
-    # System prompt:
-    #SYS_PROMPT_FILE
-
-    # Gather stats for LLM context to be ingested into system prompt
-
     user_prompt = prompt
-    prompt = _format_prompt(dataset_id, user_prompt)
+    planning_prompt = _format_prompt(dataset_id, user_prompt)
+    stored_path = _resolve_stored_path_from_dataset_id(dataset_id)
+    container_stored_path = _to_container_data_path(stored_path) if stored_path else None
     
-    # First call to determine the intent
+    # Step 1: Plan
     supervisor_response = supervisor.chat_with_usage(
-        prompt,
+        planning_prompt,
         response_schema=_STRUCTURED_RESPONSE_SCHEMA,
         system_prompt=system_prompt,
     )
 
-    json_response: dict[str, Any] = supervisor_response.get(
-        "reply_json",
-        {"message": "", "code": "", "call_tool": False,},
-    )
-    print(f"\033[94m{json_response}\033[0m")
-
-    # Tool Call loop to answer question 3 tries
-    count = 0
+    json_response = _extract_reply_json(supervisor_response)
     code_execution_response: dict[str, Any] = {
         "ok": False,
         "stdout": "",
@@ -204,94 +232,70 @@ def respond_to_job(
         "error": "",
     }
 
-    while json_response.get("code", "") and count < MAX_CALLS:
-        # Check if call tool is empty and code provided.
-        if json_response.get("code") and not json_response.get("call_tool"):
-            json_response.update({"call_tool":True})
-        if not json_response.get("code") and json_response.get("call_tool"):
-            json_response.update({"call_tool":False})
-            
-        # Trigger tool call
-        if json_response.get("call_tool", None):
-            python_code_to_execute = str(json_response.get("code"))
-            code_execution_response = code_executor(python_code_to_execute)
-
-            # If execution failed, ask for corrected code and run another tool pass.
-            if code_execution_response.get("stderr"):
-                # Run tool call (with memory)
-                temp_prompt = f"""
-                Error from triggered code execution call:
-                {code_execution_response.get("stderr")}
-
-                Your original Code:
-                {json_response.get("code")}
-
-                Fix this error with python code and setting call_tool to true 
-
-                EXAMPLE OUTPUT:
-                {{
-                "message": "The error indicates numpy was not previously imported...",
-                "code": "import numpy as np\nimport pandas as pd\n# ...",
-                "call_tool": true,
-                }}
-                """
-                supervisor_response = supervisor.chat_with_usage(
-                    temp_prompt,
-                    response_schema=_STRUCTURED_RESPONSE_SCHEMA,
-                    system_prompt=system_prompt,
-                )
-                json_response = supervisor_response.get(
-                    "reply_json",
-                    {"message": "", "code": "", "call_tool": False,},
-                )
-                print(f"\033[94m{json_response}\033[0m")
-            else:
-                # If execution succeeded, ask for final response without another tool call.
-                temp_prompt = f"""
-                Original question from user:
-                {user_prompt}
-
-                Results from triggered code execution call:
-                {code_execution_response.get("stdout")}
-
-                Code ran:
-                {str(json_response.get("code"))}
-
-                Return final answer using the actual execution output above.
-                Do not paraphrase the request. Include the concrete result in message.
-                Set call_tool to false and code to an empty string.
-                """
-                supervisor_response = supervisor.chat_with_usage(
-                    temp_prompt,
-                    response_schema=_STRUCTURED_RESPONSE_SCHEMA,
-                    system_prompt=system_prompt,
-                )
-                json_response = supervisor_response.get(
-                    "reply_json",
-                    {"message": "", "code": "", "call_tool": False,},
-                )
-
-                # Guardrail: if model returns a placeholder, surface actual execution output.
-                stdout_text = str(code_execution_response.get("stdout") or "").strip()
-                current_message = str(json_response.get("message") or "")
-                if stdout_text and _is_placeholder_message(current_message):
-                    json_response.update({
-                        "message": stdout_text,
-                        "code": "",
-                        "call_tool": False,
-                    })
-                    supervisor_response["reply_json"] = json_response
-
-                print(f"\033[94m{json_response}\033[0m")
-                if not json_response.get("call_tool"):
-                    break
-
-        else:
+    # Step 2 + 3: Execute and repair
+    for _ in range(MAX_CALLS):
+        if not json_response.get("call_tool") or not json_response.get("code"):
             break
 
-        count += 1
+        executable_code = _build_executable_code(str(json_response.get("code")), container_stored_path)
+        code_execution_response = code_executor(executable_code)
 
-    #Update the final supervisor response
+        if _execution_succeeded(code_execution_response):
+            break
+
+        repair_prompt = f"""
+        Error from triggered code execution call:
+        {code_execution_response.get("stderr")}
+
+        Your original code:
+        {json_response.get("code")}
+
+        Dataset file path:
+        {container_stored_path}
+
+        Produce corrected python code and set call_tool=true.
+        """
+        supervisor_response = supervisor.chat_with_usage(
+            repair_prompt,
+            response_schema=_STRUCTURED_RESPONSE_SCHEMA,
+            system_prompt=system_prompt,
+        )
+        json_response = _extract_reply_json(supervisor_response)
+
+    # Step 4: Finalize
+    if _execution_succeeded(code_execution_response):
+        finalize_prompt = f"""
+        Original question from user:
+        {user_prompt}
+
+        Results from triggered code execution call:
+        {code_execution_response.get("stdout")}
+
+        Return final answer using the actual execution output above.
+        Do not paraphrase the request. Include the concrete result in message.
+        Set call_tool to false and code to an empty string.
+        """
+        supervisor_response = supervisor.chat_with_usage(
+            finalize_prompt,
+            response_schema=_STRUCTURED_RESPONSE_SCHEMA,
+            system_prompt=system_prompt,
+        )
+        json_response = _extract_reply_json(supervisor_response)
+
+        stdout_text = str(code_execution_response.get("stdout") or "").strip()
+        current_message = str(json_response.get("message") or "")
+        if stdout_text and _is_placeholder_message(current_message):
+            json_response.update({"message": stdout_text, "code": "", "call_tool": False})
+            supervisor_response["reply_json"] = json_response
+    elif code_execution_response.get("stderr"):
+        fallback_message = str(code_execution_response.get("stderr") or "Execution failed").strip()
+        supervisor_response["reply_json"] = {
+            "message": fallback_message,
+            "code": "",
+            "call_tool": False,
+        }
+
+    # Update the final supervisor response
     supervisor_response = _coerce_structured_json(supervisor_response) 
     
     return supervisor_response

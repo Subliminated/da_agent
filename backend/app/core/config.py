@@ -63,5 +63,6 @@ UPLOAD_HASH_INDEX_FILE = UPLOAD_HASH_DIR / "index.json"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "ollama/llama3.2:3b")
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+CODE_EXECUTOR_URL = os.getenv("CODE_EXECUTOR_URL", "http://localhost:8888/run")
 
 
